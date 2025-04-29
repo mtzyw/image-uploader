@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { findCardNumber, registerUser } from "../services/card.js";
+import jwt from 'jsonwebtoken';
+
 
 // 生成卡号
 export async function cardController(req, res) {
@@ -26,6 +28,17 @@ export async function cardController(req, res) {
     cardNumber
   });
 
+  //生成token一起返回过去
+  // 签发JWT Token
+  const JWT_SECRET = "112211"
+  const token = jwt.sign(
+    {
+        id: carduuid
+    },
+    JWT_SECRET,
+    { expiresIn: '7d' } // token有效期7天
+    );
+
   // 5. 返回成功
-  return res.status(200).json({ code: 0, message: "注册成功", data: { id: carduuid, cardNumber } });
+  return res.status(200).json({ code: 0, message: "注册成功", data: { id: carduuid, cardNumber,token } });
 }
