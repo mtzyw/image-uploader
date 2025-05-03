@@ -12,7 +12,13 @@ app.use(express.json());
 app.use(cors());
 app.use('/api', userRouter);
 app.use('/uploads', express.static('uploads'));
+app.use('/downloads', express.static('downloads', {
+  setHeaders: res => {
+    res.set('Access-Control-Allow-Origin', '*');
+  }
+}));
 app.use(errorMiddleware)
+
 
 // 启动服务器
 app.listen(3000, () => {
