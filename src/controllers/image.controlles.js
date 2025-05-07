@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { saveImageRecord } from '../services/image.js';
+import { findUserImages } from '../services/allimage.js';
 
 // 图片上传控制器
 export async function uploadImageController(req, res) {
@@ -33,4 +34,31 @@ export async function uploadImageController(req, res) {
       filename: file.originalname  // 可选，返回原始文件名给用户
     }
   });
+}
+
+
+// 查询用户分页图片
+export async function getMyImagesController(req, res) {
+  const userId = req.user?.id;
+  const { page = 1, pageSize = 10 } = req.query;
+
+  if (!userId) {
+    return res.status(401).json({ code: 1, message: '未登录或无权限' });
+  }
+
+  try {
+    const list = await findUserImages({
+      userId,
+      page: parseInt(page),
+      pageSize: parseInt(pageSize),
+    });
+
+    return res.status(200).json({
+      code: 0,
+      message: '获取成功',
+      data: list
+    });
+  } catch (err) {
+    return res.status(500).json({ code: 1, message: '服务器错误' });
+  }
 }
