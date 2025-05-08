@@ -13,12 +13,12 @@ import { v4 as uuidv4 } from 'uuid';
 
 const FREEPIK_API_KEY = process.env.FREEPIK_API_KEY;
 
-// 简单工具，给日期加天数
+// 工具函数：给日期加天数
 function addDays(date, days) {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
-// 下载 URL 到本地并返回相对路径
+// 下载到本地并返回路径
 function downloadToLocal(downloadUrl, filename) {
   const saveDir = path.resolve('downloads');
   if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir);
@@ -57,11 +57,13 @@ console.log('🐮 启动 downloadQueue Worker…');
 new Worker(
   downloadQueue.name,
   async job => {
-    const { id, type, userId,sourceUrl} = job.data;
-    //job拿到了链接
+    const { id, type, userId, sourceUrl } = job.data;
     const now = new Date();
 
-    // 1. 获取用户卡信息
+    console.log('📥 接收到任务:', { id, type, userId, sourceUrl });
+
+    // 获取用户
+    console.log('🔍 获取用户信息...');
     const [user] = await db
       .select({
         firstUsed: users.cardFirstUsedAt,
@@ -76,56 +78,86 @@ new Worker(
       .from(users)
       .where(eq(users.id, userId));
 
-    // 日重置逻辑
+    if (!user) {
+      console.error('❌ 用户不存在');
+      throw new Error('用户不存在');
+    }
+
+    console.log('✅ 用户信息:', user);
+
+    // 重置每日下载
     const todayStr = now.toISOString().slice(0, 10);
     if (user.dailyDate !== todayStr) {
+      console.log('📆 重置用户每日下载计数');
       await db.update(users)
         .set({ dailyDownloads: 0, dailyDownloadsDate: todayStr, updatedAt: now })
         .where(eq(users.id, userId));
       user.dailyDownloads = 0;
       user.dailyDate = todayStr;
     }
-    // 2. 检查有效期
+
+    // 检查有效期
     if (!user.firstUsed) {
+      console.log('🆕 首次使用卡，设置过期时间...');
       const expiresAt = addDays(now, user.validDays);
       await db.update(users)
         .set({ cardFirstUsedAt: now, cardExpiresAt: expiresAt, updatedAt: now })
         .where(eq(users.id, userId));
     } else if (user.expiresAt && now > user.expiresAt) {
+      console.warn('⏰ 卡已过期');
       throw new Error('卡号已过期');
     }
-    // 3. 检查每日限额
+
+    // 每日限额
     if (user.dailyLimit > 0 && user.dailyDownloads >= user.dailyLimit) {
+      console.warn('🚫 每日下载次数超限');
       throw new Error('今日下载次数已达上限');
     }
-    // 4. 检查总限额
+
+    // 总限额
     if (user.totalLimit > 0 && user.totalDownloads >= user.totalLimit) {
+      console.warn('🚫 总下载次数超限');
       throw new Error('下载总次数已达上限');
     }
 
-    // 5. 构建 Freepik API URL
+    // 获取下载链接
     const apiUrl = type === 'icon'
       ? `https://api.freepik.com/v1/icons/${id}/download`
       : `https://api.freepik.com/v1/resources/${id}/download`;
 
-    const resFetch = await fetch(apiUrl, { headers: { 'x-freepik-api-key': FREEPIK_API_KEY } });
+    console.log('🌐 调用 Freepik API:', apiUrl);
+    const resFetch = await fetch(apiUrl, {
+      headers: { 'x-freepik-api-key': FREEPIK_API_KEY }
+    });
+
     if (!resFetch.ok) {
       const errText = await resFetch.text();
-      console.error('Freepik 返回错误:', errText);
+      console.error('❌ Freepik API 错误:', errText);
       throw new Error(`Freepik API ${resFetch.status}`);
     }
+
     const data = await resFetch.json();
+    console.log('📦 获取文件链接成功:', data.data.url);
 
-    // 6. 下载到本地
+    // 下载到本地
     const filename = data.data.filename || `${id}.zip`;
-    const downloadUrl = data.data.url;
-    const localPath = await downloadToLocal(downloadUrl, filename);
-    const fullUrl = `http://localhost:3000${localPath}`;
+    console.log('⬇️ 开始下载:', filename);
+    const localPath = await downloadToLocal(data.data.url, filename);
+    const fullUrl = `https://freepikapi.shayudata.com${localPath}`;
+    console.log('✅ 下载完成:', fullUrl);
 
-    // 7. 存储记录
-    await saveImageRecord({ id: uuidv4(), userId, filename, url: fullUrl ,sourceUrl});
+    // 保存记录
+    console.log('💾 保存下载记录...');
+    await saveImageRecord({
+      id: uuidv4(),
+      userId,
+      filename,
+      url: fullUrl,
+      sourceUrl
+    });
 
-    // 8. 更新用户计数
+    // 更新用户计数
+    console.log('🔢 更新用户下载计数...');
     await db.update(users)
       .set({
         dailyDownloads: user.dailyDownloads + 1,
@@ -134,7 +166,8 @@ new Worker(
       })
       .where(eq(users.id, userId));
 
+    console.log('🎉 任务处理完成:', filename);
     return { filename, fullUrl };
   },
   { connection }
-)
+);
